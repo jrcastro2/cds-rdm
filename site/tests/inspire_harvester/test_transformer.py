@@ -10,6 +10,7 @@
 from invenio_vocabularies.datastreams import StreamEntry
 
 from cds_rdm.inspire_harvester.transformer import InspireJsonTransformer
+from idutils.normalizers import normalize_isbn
 
 transformer_entry1 = {
     "metadata": {
@@ -677,6 +678,60 @@ transformer_entry7 = {
     "created": "2020-01-01T00:00:00Z",
 }
 
+transformer_entry8 = {
+    "metadata": {
+        "titles": [{"title": "A new hope"}],
+        "collaboration": [{"value": "CMS"}],
+        "license": [
+            {"imposing": "CERN", "license": "CC-BY-4.0", "url": "https://license"}
+        ],
+        "public_notes": [{"value": "Important note"}],
+        "record_affiliations": [{"record": "CERN"}],
+        "title_translations": [
+            {"language": "fr", "title": "Un nouvel espoir"}
+        ],
+        "related_records": [
+            {"record": "https://cds.cern.ch/record/12345", "relation": "successor"}
+        ],
+        "publication_info": [
+            {
+                "journal_title": "Phys.Lett.B",
+                "journal_volume": "42",
+                "journal_issue": "1",
+                "artid": "123",
+                "page_start": "10",
+                "page_end": "20",
+                "cnum": "C23-07-12",
+                "conf_acronym": "ICHEP",
+                "conference_record": "https://inspirehep.net/conferences/54321",
+                "parent_isbn": "978-0-306-40615-7",
+                "parent_record": "https://cds.cern.ch/record/54321",
+                "parent_report_number": "CERN-REP-2024-001",
+                "journal_record": "https://cds.cern.ch/record/33333",
+            }
+        ],
+        "thesis_info": {
+            "date": "2021-05-01",
+            "defense_date": "2022-01-01",
+            "degree_type": "PhD",
+            "institutions": [{"name": "CERN"}],
+        },
+        "authors": [{"first_name": "A", "last_name": "Author"}],
+        "documents": [{"filename": "file.pdf", "key": "123", "url": "url"}],
+    },
+    "id": "2685001",
+}
+
+transformer_entry9 = {
+    "metadata": {
+        "titles": [{"title": "Missing fields"}],
+        "authors": [{"first_name": "A", "last_name": "Author"}],
+        "documents": [{"filename": "file.pdf", "key": "123", "url": "url"}],
+        "related_records": [{"record": "123ABC", "relation": "other"}],
+    },
+    "id": "2685002",
+}
+
 
 def test_transformer(running_app, caplog):
     """Test transformation rules."""
@@ -689,6 +744,8 @@ def test_transformer(running_app, caplog):
     result5 = transformer.apply(StreamEntry(transformer_entry5))
     result6 = transformer.apply(StreamEntry(transformer_entry6))
     result7 = transformer.apply(StreamEntry(transformer_entry7))
+    result8 = transformer.apply(StreamEntry(transformer_entry8))
+    result9 = transformer.apply(StreamEntry(transformer_entry9))
 
     record1 = result1.entry
     record2 = result2.entry
@@ -697,6 +754,8 @@ def test_transformer(running_app, caplog):
     record5 = result5.entry
     record6 = result6.entry
     record7 = result7.entry
+    record8 = result8.entry
+    record9 = result9.entry
 
     # Assertions
     # ----- Titles -----
@@ -1189,3 +1248,94 @@ def test_transformer(running_app, caplog):
         ),
         "scheme": "hdl",
     } not in record1["metadata"]["identifiers"]
+
+    # case 3: urls added as identifiers
+    assert {
+        "identifier": transformer_entry1["metadata"]["urls"][0]["value"],
+        "scheme": "url",
+    } in record1["metadata"]["identifiers"]
+
+    # ----- Collaborations -----
+    assert {
+        "person_or_org": {"type": "organizational", "name": "CMS"}
+    } in record8["metadata"]["contributor"]
+    assert {
+        "person_or_org": {"type": "organizational", "name": "CERN"}
+    } in record8["metadata"]["contributor"]
+    assert "contributor" not in record9["metadata"]
+
+    # ----- Rights -----
+    assert record8["metadata"]["rights"] == [
+        {"description": "CERN", "id": "CC-BY-4.0", "link": "https://license"}
+    ]
+    assert "rights" not in record9["metadata"]
+
+    # ----- Public notes -----
+    assert {
+        "description": "Important note",
+        "type": {"id": "other"},
+    } in record8["metadata"]["additional_descriptions"]
+
+    # ----- Title translations -----
+    assert {
+        "title": "Un nouvel espoir",
+        "lang": "fr",
+        "type": {"id": "translated-title"},
+    } in record8["metadata"]["additional_titles"]
+
+    # ----- Related identifiers -----
+    assert {
+        "identifier": "https://cds.cern.ch/record/12345",
+        "scheme": "url",
+        "relation_type": {"id": "is continued by"},
+    } in record8["metadata"]["related_identifiers"]
+    assert {
+        "identifier": "https://cds.cern.ch/record/33333",
+        "scheme": "url",
+        "relation_type": {"id": "published_in"},
+    } in record8["metadata"]["related_identifiers"]
+    assert {
+        "identifier": normalize_isbn("978-0-306-40615-7"),
+        "scheme": "isbn",
+        "relation_type": {"id": "published_in"},
+    } in record8["metadata"]["related_identifiers"]
+
+    # ----- Custom fields journal -----
+    assert record8["custom_fields"]["journal:journal"]["title"] == "Phys.Lett.B"
+    assert record8["custom_fields"]["journal:journal"]["volume"] == "42"
+    assert record8["custom_fields"]["journal:journal"]["issue"] == "1"
+    assert record8["custom_fields"]["journal:journal"]["page_range"] == "10-20"
+    assert record8["custom_fields"]["journal:journal"]["pages"] == "10-20, 123"
+
+    # ----- Custom fields meeting -----
+    assert record8["custom_fields"]["meeting:meeting"]["acronym"] == "ICHEP"
+    assert {
+        "scheme": "inspire",
+        "value": "C23-07-12",
+    } in record8["custom_fields"]["meeting:meeting"]["identifiers"]
+    assert {
+        "scheme": "url",
+        "value": "https://inspirehep.net/conferences/54321",
+    } in record8["custom_fields"]["meeting:meeting"]["identifiers"]
+
+    # ----- Custom fields thesis -----
+    assert (
+        record8["custom_fields"]["thesis:thesis"]["date_submitted"]
+        == "2021-05-01"
+    )
+    assert (
+        record8["custom_fields"]["thesis:thesis"]["date_defended"]
+        == "2022-01-01"
+    )
+    assert record8["custom_fields"]["thesis:thesis"]["type"] == "PhD"
+    assert (
+        record8["custom_fields"]["thesis:thesis"]["university"] == "CERN"
+    )
+
+    # ----- Related identifier errors -----
+    assert (
+        "Could not detect scheme for related identifier '123ABC'." in result9.errors[0]
+    )
+    assert (
+        "Unknown relation type 'other' for identifier '123ABC'." in result9.errors[1]
+    )
